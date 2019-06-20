@@ -1,4 +1,5 @@
 import os
+os.environ["HDF5_USE_FILE_LOCKING"] = 'FALSE'
 import gc
 import datetime
 import numpy as np
@@ -24,8 +25,10 @@ from libs.util import MaskGenerator
 
 # Sample call
 r"""
-# Train on CelebaHQ
-python main.py --name CelebHQ --train C:\Documents\Kaggle\celebaHQ-512\train\ --validation C:\Documents\Kaggle\celebaHQ-512\val\ --test C:\Documents\Kaggle\celebaHQ-512\test\ --checkpoint "C:\Users\Mathias Felix Gruber\Documents\GitHub\PConv-Keras\data\logs\imagenet_phase1_paperMasks\weights.35-0.70.h5"
+# Train on CelebaHQ with cvMasks
+python main.py --stage train --name CelebAHQ_cvMasks --batch_size 6 --vgg_device /gpu:1 --train /userhome/CelebA/Img/img_align_celeba/train --validation /userhome/CelebA/Img/img_align_celeba/val --test /userhome/CelebA/Img/img_align_celeba/test --checkpoint ./data/logs/imagenet_cvMasks_phase1/pconv_imagenet.h5
+# Train on CelebaHQ with paperMasks
+python main.py --stage train --name CelebAHQ_cvMasks --batch_size 6 --vgg_device /gpu:1 --masks ./data/cvMasks --train /userhome/CelebA/Img/img_align_celeba/train --validation /userhome/CelebA/Img/img_align_celeba/val --test /userhome/CelebA/Img/img_align_celeba/test --checkpoint ./data/logs/imagenet_cvMasks_phase1/pconv_imagenet.h5
 """
 
 
@@ -55,6 +58,12 @@ def parse_args():
         '-test', '--test',
         type=str,
         help='Folder with testing images'
+    )
+
+    parser.add_argument(
+        '-masks', '--masks',
+        type=str, default=None,
+        help='Folder with paper masks'
     )
         
     parser.add_argument(
@@ -94,10 +103,23 @@ def parse_args():
     )
 
     parser.add_argument(
+        '-vgg_device', '--vgg_device',
+        type=str, default=None,
+        help='Exclusive device run VGG16 for inference.'
+    )
+
+    parser.add_argument(
         '-checkpoint', '--checkpoint',
         type=str, 
         help='Previous weights to be loaded onto model'
     )
+
+    parser.add_argument(
+        '-gpus', '--gpus',
+        type=int, default=1,
+        help='Number of gpus for training'
+    )
+
         
     return  parser.parse_args()
 
@@ -146,7 +168,7 @@ if __name__ == '__main__':
     )
     train_generator = train_datagen.flow_from_directory(
         args.train, 
-        MaskGenerator(512, 512, 3),
+        MaskGenerator(512, 512, 3, filepath=args.masks),
         target_size=(512, 512), 
         batch_size=args.batch_size
     )
@@ -154,22 +176,22 @@ if __name__ == '__main__':
     # Create validation generator
     val_datagen = AugmentingDataGenerator(rescale=1./255)
     val_generator = val_datagen.flow_from_directory(
-        args.validation, 
-        MaskGenerator(512, 512, 3), 
+        args.validation,
+        MaskGenerator(512, 512, 3, filepath=args.masks),
         target_size=(512, 512), 
         batch_size=args.batch_size, 
-        classes=['val'], 
-        seed=42
+        classes=['val']
+        # seed=42
     )
 
     # Create testing generator
     test_datagen = AugmentingDataGenerator(rescale=1./255)
     test_generator = test_datagen.flow_from_directory(
         args.test, 
-        MaskGenerator(512, 512, 3), 
+        MaskGenerator(512, 512, 3, filepath=args.masks),
         target_size=(512, 512), 
         batch_size=args.batch_size, 
-        seed=42
+        # seed=42
     )
 
     # Pick out an example to be send to test samples folder
@@ -194,15 +216,21 @@ if __name__ == '__main__':
             axes[1].set_title('Predicted Image')
             axes[2].set_title('Original Image')
                     
-            plt.savefig(os.path.join(path, '/img_{}_{}.png'.format(i, pred_time)))
+            plt.savefig(os.path.join(path, 'img_{}_{}.png'.format(i, pred_time)))
             plt.close()
 
     # Load the model
     if args.vgg_path:
-        model = PConvUnet(vgg_weights=args.vgg_path)
+        model = PConvUnet(vgg_weights=args.vgg_path, gpus=args.gpus, vgg_device=args.vgg_device)
     else:
-        model = PConvUnet()
-    
+        model = PConvUnet(gpus=args.gpus, vgg_device=args.vgg_device)
+
+    phase = 0
+    if args.stage == 'train':
+        phase = 1
+    else:
+        phase = 2
+
     # Loading of checkpoint
     if args.checkpoint:
         if args.stage == 'train':
@@ -213,18 +241,18 @@ if __name__ == '__main__':
     # Fit model
     model.fit_generator(
         train_generator, 
-        steps_per_epoch=10000,
+        steps_per_epoch=2000,
         validation_data=val_generator,
-        validation_steps=1000,
-        epochs=100,  
+        validation_steps=200,
+        epochs=150,
         verbose=0,
         callbacks=[
             TensorBoard(
-                log_dir=os.path.join(args.log_path, args.name+'_phase1'),
+                log_dir=os.path.join(args.log_path, args.name+'_phase{:d}'.format(phase)),
                 write_graph=False
             ),
             ModelCheckpoint(
-                os.path.join(args.log_path, args.name+'_phase1', 'weights.{epoch:02d}-{loss:.2f}.h5'),
+                os.path.join(args.weight_path, args.name+'_phase{:d}'.format(phase), 'weights.{epoch:02d}-{loss:.2f}.h5'),
                 monitor='val_loss', 
                 save_best_only=True, 
                 save_weights_only=True

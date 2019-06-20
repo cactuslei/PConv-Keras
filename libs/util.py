@@ -93,14 +93,14 @@ class MaskGenerator():
             y = np.random.randint(0, mask.shape[0] - self.height)
             mask = mask[y:y+self.height, x:x+self.width]
 
-        return (mask > 1).astype(np.uint8)
+        return 1-(mask > 1).astype(np.uint8)
 
     def sample(self, random_seed=None):
         """Retrieve a random mask"""
         if random_seed:
             seed(random_seed)
         if self.filepath and len(self.mask_files) > 0:
-            return self._load_mask()
+            return self._load_mask(cropping=False)
         else:
             return self._generate_mask()
 
